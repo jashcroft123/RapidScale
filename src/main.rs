@@ -125,17 +125,17 @@ async fn main(spawner: Spawner) {
     // Stability Stack: (Super damped thresholds and long debouncing)
     // 1. MedianDecorator kills impulse noise (tapping).
     // 2. DeadbandDecorator kills continuous vibration/ripple.
-    let mut variance_raw = stability::VarianceDetector::<128>::new(30_000_000); 
+    let mut variance_raw = stability::VarianceDetector::<128>::new(30_000_000);
     let mut jump_raw = stability::DifferenceDetector::new(40000); // 40k counts threshold for jumps
-    
+
     let mut variance_med = stability::MedianDecorator::<5>::new(&mut variance_raw);
     let mut jump_med = stability::MedianDecorator::<5>::new(&mut jump_raw);
 
     let mut variance_source = stability::DeadbandDecorator::new(&mut variance_med, 15000);
     let mut jump_source = stability::DeadbandDecorator::new(&mut jump_med, 15000);
-    
+
     let mut detectors: [&mut dyn StabilitySource; 2] = [&mut variance_source, &mut jump_source];
-    
+
     // Settling = 64 samples (~200ms), Stable = 160 samples (~500ms)
     let mut stability = stability::StabilityStack::new(&mut detectors, 64, 160);
 
@@ -179,9 +179,9 @@ async fn main(spawner: Spawner) {
                 let level = stability.check(reading);
 
                 let next_mode = match level {
-                    StabilityLevel::Unstable => ScaleMode::Fast,
+                    StabilityLevel::Unstable => ScaleMode::Settling,
                     StabilityLevel::Settling => ScaleMode::Settling,
-                    StabilityLevel::Stable => ScaleMode::Stable,
+                    StabilityLevel::Stable => ScaleMode::Settling,
                 };
 
                 // HANDLE MODE TRANSITIONS (Seeding)

@@ -14,7 +14,7 @@ pub async fn sampler_task(i2c: i2c::I2c<'static, I2C0, i2c::Async>, drdy_pin: In
     let mut nau = Nau7802::new(i2c, strategy, embassy_time::Delay, Some(0x2A));
 
     if let Err(e) = nau
-        .init(Ldo::L3v3, Gain::G128, SamplesPerSecond::SPS320)
+        .init(Ldo::L3v3, Gain::G128, SamplesPerSecond::SPS40)
         .await
     {
         log::error!("Sampler: Failed to initialize NAU7802: {:?}", e);
