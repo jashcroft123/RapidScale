@@ -199,7 +199,6 @@ impl<const N: usize> HampelFilter<N> {
 
 impl<const N: usize> Filter for HampelFilter<N> {
     fn add(&mut self, value: i32) -> i32 {
-        let stored = self.index;
         self.buffer[self.index] = value;
         self.index = (self.index + 1) % N;
         if self.count < N {
@@ -228,8 +227,8 @@ impl<const N: usize> Filter for HampelFilter<N> {
 
         // Threshold = sigma_threshold * (mad * 1.4826)
         // A single spike in a flat window leaves MAD at 0, so the threshold
-        // stays 0 and the old guard kept the spike. Treat that as an outlier
-        // and overwrite the stored sample so it cannot poison the next window.
+        // stays 0. Reject it in the output; retaining it in the rolling window
+        // lets a sustained real step become the majority and pass through.
         let std_dev = mad * 1.4826;
         let threshold = self.sigma_threshold * std_dev;
         let outlier = if mad == 0.0 {
@@ -239,7 +238,6 @@ impl<const N: usize> Filter for HampelFilter<N> {
         };
 
         if outlier {
-            self.buffer[stored] = median;
             median
         } else {
             value

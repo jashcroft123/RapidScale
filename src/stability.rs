@@ -19,6 +19,11 @@ pub trait StabilitySource {
     fn reset(&mut self);
     fn init_to(&mut self, value: i32);
     fn is_saturated(&self) -> bool;
+    fn variance(&self) -> Option<i64> {
+        None
+    }
+    fn set_variance_threshold(&mut self, _threshold: i64) {}
+    fn set_difference_threshold(&mut self, _threshold: i32) {}
 }
 
 // ------------------------
@@ -81,6 +86,18 @@ impl<'a, const N: usize> StabilitySource for MedianDecorator<'a, N> {
 
     fn is_saturated(&self) -> bool {
         self.inner.is_saturated() && self.count == N
+    }
+
+    fn variance(&self) -> Option<i64> {
+        self.inner.variance()
+    }
+
+    fn set_variance_threshold(&mut self, threshold: i64) {
+        self.inner.set_variance_threshold(threshold);
+    }
+
+    fn set_difference_threshold(&mut self, threshold: i32) {
+        self.inner.set_difference_threshold(threshold);
     }
 }
 
@@ -208,6 +225,20 @@ impl<const N: usize> StabilitySource for VarianceDetector<N> {
     fn is_saturated(&self) -> bool {
         self.count == N
     }
+
+    fn variance(&self) -> Option<i64> {
+        if self.count < N || N == 0 {
+            return None;
+        }
+        let n = N as i128;
+        let numerator = n * i128::from(self.sum_sq)
+            - i128::from(self.sum) * i128::from(self.sum);
+        Some((numerator / (n * n)) as i64)
+    }
+
+    fn set_variance_threshold(&mut self, threshold: i64) {
+        self.threshold = threshold;
+    }
 }
 
 // ------------------------
@@ -248,6 +279,10 @@ impl StabilitySource for DifferenceDetector {
     fn is_saturated(&self) -> bool {
         self.last_value.is_some()
     }
+
+    fn set_difference_threshold(&mut self, threshold: i32) {
+        self.threshold = threshold;
+    }
 }
 
 // ------------------------
@@ -270,6 +305,25 @@ impl<'a> StabilityStack<'a> {
             stable_threshold,
             stable_count: 0,
         }
+    }
+
+    /// Calibrate noise rejection from the empty-pan tare window.
+    pub fn calibrate_noise_thresholds(&mut self) -> Option<(i64, i64, i32)> {
+        let measured = self.detectors.iter().find_map(|detector| detector.variance())?;
+        const MIN_THRESHOLD: i64 = 3_500;
+        const MAX_THRESHOLD: i64 = 1_000_000;
+        let threshold = measured.saturating_mul(4).clamp(MIN_THRESHOLD, MAX_THRESHOLD);
+        let jump_threshold = (libm::sqrtf(measured as f32) * 4.0) as i32;
+        let jump_threshold = jump_threshold.clamp(300, 5_000);
+        for detector in self.detectors.iter_mut() {
+            detector.set_variance_threshold(threshold);
+            detector.set_difference_threshold(jump_threshold);
+        }
+        Some((measured, threshold, jump_threshold))
+    }
+
+    pub fn measured_variance(&self) -> Option<i64> {
+        self.detectors.iter().find_map(|detector| detector.variance())
     }
 }
 

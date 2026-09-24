@@ -158,10 +158,28 @@ async fn main(spawner: Spawner) {
 
         match state {
             ScaleState::Tare => {
+                // Reuse the empty-pan tare interval to measure the scale's
+                // stationary noise before choosing the variance threshold.
+                let _ = stability.check(clean);
                 let output = tare_value.add(clean);
                 if tare_value.is_saturated() {
                     tare_offset = output;
                     last_output = output;
+                    if let Some((noise_variance, threshold, jump_threshold)) =
+                        stability.calibrate_noise_thresholds()
+                    {
+                        log::info!(
+                            "Noise calibration: variance={} counts^2, variance threshold={} counts^2, jump threshold={} counts",
+                            noise_variance,
+                            threshold,
+                            jump_threshold,
+                        );
+                        if noise_variance.saturating_mul(4) > 100_000 {
+                            log::warn!(
+                                "Tare noise is high; check that the scale is level, unloaded, and mechanically isolated"
+                            );
+                        }
+                    }
                     fast_stack.init_to(output);
                     settle_stack.init_to(output);
                     stable_stack.init_to(output);
@@ -217,10 +235,11 @@ async fn main(spawner: Spawner) {
                 let now = Instant::now();
                 if now - last_report_time >= Duration::from_millis(500) {
                     log::info!(
-                        "Mode: {:?}, Stability: {:?}, Value: {:.3} g",
+                        "Mode: {:?}, Stability: {:?}, Value: {:.3} g, Variance: {:?} counts^2",
                         mode,
                         level,
                         output_calibrated,
+                        stability.measured_variance(),
                     );
                     last_report_time = now;
                 }
