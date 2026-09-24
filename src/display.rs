@@ -4,7 +4,7 @@ use embassy_rp::multicore::Stack;
 use embassy_rp::spi::Spi;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::Watch;
-use embassy_time::{Duration, Instant};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Dimensions, Size};
 use embedded_graphics::mono_font::{ascii::FONT_10X20, MonoTextStyleBuilder};
@@ -15,7 +15,7 @@ use embedded_graphics::text::Text;
 use mipidsi::Builder;
 use mipidsi::interface::SpiInterface;
 
-use crate::types::DisplayData;
+use crate::types::{DisplayData, ScaleMode};
 
 pub const DISPLAY_WIDTH: u32 = 172;
 pub const DISPLAY_HEIGHT: u32 = 320;
@@ -102,7 +102,7 @@ pub async fn display_task(
         log::error!("Display: Failed to clear display: {:?}", e);
     }
 
-    let text_style = MonoTextStyleBuilder::new()
+    let initial_text_style = MonoTextStyleBuilder::new()
         .font(&FONT_10X20)
         .text_color(Rgb565::CSS_ORANGE)
         .background_color(Rgb565::BLACK)
@@ -114,12 +114,13 @@ pub async fn display_task(
         .background_color(Rgb565::BLACK)
         .build();
 
-    if let Err(e) = Text::new("Scale booting...", Point::new(10, 20), text_style).draw(&mut display)
+    if let Err(e) = Text::new("Scale booting...", Point::new(10, 20), initial_text_style).draw(&mut display)
     {
         log::error!("Display: Failed to draw initial text: {:?}", e);
     }
 
     let mut last_tare = false;
+    let mut last_mode: Option<ScaleMode> = None;
     let mut frame_count = 0;
     let mut last_fps_time = Instant::now();
     let mut _max_fps = 0;
@@ -146,18 +147,40 @@ pub async fn display_task(
             last_tare = true;
         }
 
+        // Draw mode status badge if changed
+        if last_mode != Some(data.mode) {
+            last_mode = Some(data.mode);
+            let (mode_text, mode_color) = match data.mode {
+                ScaleMode::Fast => ("POURING  ", Rgb565::CSS_ORANGE),
+                ScaleMode::Settling => ("SETTLING ", Rgb565::YELLOW),
+                ScaleMode::Stable => ("STABLE   ", Rgb565::GREEN),
+            };
+            let status_style = MonoTextStyleBuilder::new()
+                .font(&FONT_10X20)
+                .text_color(mode_color)
+                .background_color(Rgb565::BLACK)
+                .build();
+            let _ = Text::new(mode_text, Point::new(10, 25), status_style).draw(&mut display);
+        }
+
         let mut text_buf = TextBuf {
             data: &mut *text_buf_data,
             width: 280,
             height: 40,
         };
 
+        // Clear text buffer before rendering to avoid ghosting artifacts
+        text_buf.data.fill(Rgb565::BLACK);
+
         let mut buf: heapless::String<64> = heapless::String::new();
         let _ = write!(&mut buf, "{:8.3} g", data.value);
-        let _ = Text::new(&buf, Point::new(0, 20), value_style).draw(&mut text_buf);
+        let _ = Text::new(&buf, Point::new(0, 25), value_style).draw(&mut text_buf);
         let _ = display.fill_contiguous(
             &Rectangle::new(Point::new(10, 50), Size::new(280, 40)),
             text_buf.data.iter().copied(),
         );
+
+        // Throttle display redraws to ~30 FPS to reduce SPI traffic and Core 1 load
+        Timer::after(Duration::from_millis(30)).await;
     }
 }

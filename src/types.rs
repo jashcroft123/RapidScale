@@ -15,4 +15,5 @@ pub enum ScaleState {
 pub struct DisplayData {
     pub value: f32,
     pub tare_flag: bool,
+    pub mode: ScaleMode,
 }

@@ -14,7 +14,7 @@ pub async fn sampler_task(i2c: i2c::I2c<'static, I2C0, i2c::Async>, drdy_pin: In
     let mut nau = Nau7802::new(i2c, strategy, embassy_time::Delay, Some(0x2A));
 
     if let Err(e) = nau
-        .init(Ldo::L3v3, Gain::G128, SamplesPerSecond::SPS40)
+        .init(Ldo::L3v3, Gain::G128, SamplesPerSecond::SPS320)
         .await
     {
         log::error!("Sampler: Failed to initialize NAU7802: {:?}", e);
@@ -26,8 +26,11 @@ pub async fn sampler_task(i2c: i2c::I2c<'static, I2C0, i2c::Async>, drdy_pin: In
     loop {
         if let Ok(()) = nau.wait_for_data_available().await {
             if let Ok(reading) = nau.read().await {
-                if let Err(_) = CHANNEL.try_send(reading) {
-                    // This is fine, just means main is busy
+                // Keep the DRDY loop moving. If main is behind, drop the oldest
+                // queued sample and keep this one instead of stalling the ADC.
+                if CHANNEL.try_send(reading).is_err() {
+                    let _ = CHANNEL.try_receive();
+                    let _ = CHANNEL.try_send(reading);
                 }
             } else {
                 log::error!("Sampler: Failed to read from NAU7802");

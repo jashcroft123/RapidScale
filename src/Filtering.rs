@@ -1,5 +1,6 @@
 pub trait Filter {
     fn add(&mut self, value: i32) -> i32;
+    #[allow(dead_code)]
     fn reset(&mut self);
     fn init_to(&mut self, value: i32); // Seed the filter with an initial value
     fn is_saturated(&self) -> bool;
@@ -77,6 +78,7 @@ impl<const N: usize> EMA<N> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_alpha(alpha: f32) -> Self {
         Self {
             alpha,
@@ -118,6 +120,7 @@ impl<const N: usize> Filter for EMA<N> {
 // ------------------------
 // Median Filter
 // ------------------------
+#[allow(dead_code)]
 pub struct Median<const N: usize> {
     buffer: [i32; N],
     index: usize,
@@ -125,6 +128,7 @@ pub struct Median<const N: usize> {
 }
 
 impl<const N: usize> Median<N> {
+    #[allow(dead_code)]
     pub const fn new() -> Self {
         Self {
             buffer: [0; N],
@@ -195,6 +199,7 @@ impl<const N: usize> HampelFilter<N> {
 
 impl<const N: usize> Filter for HampelFilter<N> {
     fn add(&mut self, value: i32) -> i32 {
+        let stored = self.index;
         self.buffer[self.index] = value;
         self.index = (self.index + 1) % N;
         if self.count < N {
@@ -222,11 +227,20 @@ impl<const N: usize> Filter for HampelFilter<N> {
         let mad = mad_slice[self.count / 2] as f32;
 
         // Threshold = sigma_threshold * (mad * 1.4826)
+        // A single spike in a flat window leaves MAD at 0, so the threshold
+        // stays 0 and the old guard kept the spike. Treat that as an outlier
+        // and overwrite the stored sample so it cannot poison the next window.
         let std_dev = mad * 1.4826;
         let threshold = self.sigma_threshold * std_dev;
+        let outlier = if mad == 0.0 {
+            value != median
+        } else {
+            (value - median).abs() as f32 > threshold
+        };
 
-        if (value - median).abs() as f32 > threshold && threshold > 0.0 {
-            median // Replace outlier with median
+        if outlier {
+            self.buffer[stored] = median;
+            median
         } else {
             value
         }
@@ -251,6 +265,7 @@ impl<const N: usize> Filter for HampelFilter<N> {
 // ------------------------
 // Kalman Filter (1D)
 // ------------------------
+#[allow(dead_code)]
 pub struct KalmanFilter {
     x: f32, // State estimate
     p: f32, // Estimate covariance
@@ -260,6 +275,7 @@ pub struct KalmanFilter {
 }
 
 impl KalmanFilter {
+    #[allow(dead_code)]
     pub const fn new(q: f32, r: f32) -> Self {
         Self {
             x: 0.0,
@@ -315,6 +331,7 @@ pub struct NotchFilter {
     x2: f32,
     y1: f32,
     y2: f32,
+    initialized: bool,
     // Coefficients
     b0: f32,
     b1: f32,
@@ -328,9 +345,16 @@ impl NotchFilter {
     pub const fn new_50hz_320sps() -> Self {
         // Calculated for Q=10
         Self {
-            x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0,
-            b0: 0.9602, b1: -1.0667, b2: 0.9602,
-            a1: -1.0667, a2: 0.9203,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+            initialized: false,
+            b0: 0.9602,
+            b1: -1.0667,
+            b2: 0.9602,
+            a1: -1.0667,
+            a2: 0.9203,
         }
     }
 }
@@ -338,6 +362,10 @@ impl NotchFilter {
 impl Filter for NotchFilter {
     fn add(&mut self, value: i32) -> i32 {
         let x = value as f32;
+        if !self.initialized {
+            self.init_to(value);
+            return value;
+        }
         let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2;
 
         self.x2 = self.x1;
@@ -349,8 +377,11 @@ impl Filter for NotchFilter {
     }
 
     fn reset(&mut self) {
-        self.x1 = 0.0; self.x2 = 0.0;
-        self.y1 = 0.0; self.y2 = 0.0;
+        self.x1 = 0.0;
+        self.x2 = 0.0;
+        self.y1 = 0.0;
+        self.y2 = 0.0;
+        self.initialized = false;
     }
 
     fn init_to(&mut self, value: i32) {
@@ -359,6 +390,7 @@ impl Filter for NotchFilter {
         self.x2 = val_f;
         self.y1 = val_f;
         self.y2 = val_f;
+        self.initialized = true;
     }
 
     fn is_saturated(&self) -> bool {

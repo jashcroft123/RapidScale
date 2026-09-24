@@ -5,6 +5,7 @@ pub enum StabilityLevel {
     Stable,
 }
 
+#[allow(dead_code)]
 pub trait StabilityDetector {
     fn check(&mut self, value: i32) -> StabilityLevel;
     fn reset(&mut self);
@@ -12,6 +13,7 @@ pub trait StabilityDetector {
     fn is_saturated(&self) -> bool;
 }
 
+#[allow(dead_code)]
 pub trait StabilitySource {
     fn is_unstable(&mut self, value: i32) -> bool;
     fn reset(&mut self);
@@ -85,6 +87,7 @@ impl<'a, const N: usize> StabilitySource for MedianDecorator<'a, N> {
 // ------------------------
 // Deadband Decorator: Suppresses noise by holding the last value if change is small
 // ------------------------
+#[allow(dead_code)]
 pub struct DeadbandDecorator<'a> {
     inner: &'a mut dyn StabilitySource,
     deadband: i32,
@@ -92,6 +95,7 @@ pub struct DeadbandDecorator<'a> {
 }
 
 impl<'a> DeadbandDecorator<'a> {
+    #[allow(dead_code)]
     pub fn new(inner: &'a mut dyn StabilitySource, deadband: i32) -> Self {
         Self {
             inner,
@@ -104,11 +108,11 @@ impl<'a> DeadbandDecorator<'a> {
 impl<'a> StabilitySource for DeadbandDecorator<'a> {
     fn is_unstable(&mut self, value: i32) -> bool {
         let diff = (value - self.last_center).abs();
-        
+
         let value_to_use = if diff < self.deadband {
-            self.last_center 
+            self.last_center
         } else {
-            self.last_center = value; 
+            self.last_center = value;
             value
         };
 
@@ -131,12 +135,14 @@ impl<'a> StabilitySource for DeadbandDecorator<'a> {
 }
 
 // ------------------------
-// Variance Detector (Base Source)
+// Variance Detector (Base Source) - O(1) Running Variance with Exact Numerator
 // ------------------------
 pub struct VarianceDetector<const N: usize> {
     buf: [i32; N],
     idx: usize,
     count: usize,
+    sum: i64,
+    sum_sq: i64,
     threshold: i64,
 }
 
@@ -146,6 +152,8 @@ impl<const N: usize> VarianceDetector<N> {
             buf: [0; N],
             idx: 0,
             count: 0,
+            sum: 0,
+            sum_sq: 0,
             threshold,
         }
     }
@@ -153,39 +161,48 @@ impl<const N: usize> VarianceDetector<N> {
 
 impl<const N: usize> StabilitySource for VarianceDetector<N> {
     fn is_unstable(&mut self, v: i32) -> bool {
-        self.buf[self.idx] = v;
-        self.idx = (self.idx + 1) % N;
+        let v64 = v as i64;
+
         if self.count < N {
+            self.buf[self.idx] = v;
+            self.sum += v64;
+            self.sum_sq += v64 * v64;
+            self.idx = (self.idx + 1) % N;
             self.count += 1;
             return true;
         }
 
-        let n = self.count as i64;
-        let sum: i64 = self.buf.iter().map(|&x| x as i64).sum();
-        let mean = sum / n;
+        let old = self.buf[self.idx] as i64;
+        self.buf[self.idx] = v;
+        self.idx = (self.idx + 1) % N;
 
-        let variance: i64 = self
-            .buf
-            .iter()
-            .map(|&x| {
-                let d = x as i64 - mean;
-                d * d
-            })
-            .sum::<i64>()
-            / n;
+        self.sum = self.sum - old + v64;
+        self.sum_sq = self.sum_sq - (old * old) + (v64 * v64);
 
-        variance > self.threshold
+        // Compare the scaled sum of squares in i128. Dividing the raw ADC
+        // offset down to a mean first truncates away the noise, and the
+        // i64 products overflow once counts leave the 24-bit range.
+        let n = N as i128;
+        let numerator = n * i128::from(self.sum_sq) - i128::from(self.sum) * i128::from(self.sum);
+        let limit = i128::from(self.threshold) * n * n;
+        numerator > limit
     }
 
     fn reset(&mut self) {
+        self.buf = [0; N];
         self.count = 0;
         self.idx = 0;
+        self.sum = 0;
+        self.sum_sq = 0;
     }
 
     fn init_to(&mut self, value: i32) {
         self.buf = [value; N];
         self.count = N;
         self.idx = 0;
+        let v64 = value as i64;
+        self.sum = v64 * N as i64;
+        self.sum_sq = (v64 * v64) * N as i64;
     }
 
     fn is_saturated(&self) -> bool {
@@ -239,7 +256,6 @@ impl StabilitySource for DifferenceDetector {
 // ------------------------
 pub struct StabilityStack<'a> {
     detectors: &'a mut [&'a mut dyn StabilitySource],
-    settle_threshold: usize,
     stable_threshold: usize,
     stable_count: usize,
 }
@@ -247,12 +263,10 @@ pub struct StabilityStack<'a> {
 impl<'a> StabilityStack<'a> {
     pub fn new(
         detectors: &'a mut [&'a mut dyn StabilitySource],
-        settle_threshold: usize,
         stable_threshold: usize,
     ) -> Self {
         Self {
             detectors,
-            settle_threshold,
             stable_threshold,
             stable_count: 0,
         }
@@ -269,7 +283,8 @@ impl<'a> StabilityDetector for StabilityStack<'a> {
             }
         }
 
-        // 2. State management
+        // A detector firing is motion. Quiet samples are Settling until the
+        // debounce count locks Stable, so the fast path is not used to wait.
         if any_unstable {
             self.stable_count = 0;
             StabilityLevel::Unstable
@@ -277,10 +292,8 @@ impl<'a> StabilityDetector for StabilityStack<'a> {
             self.stable_count += 1;
             if self.stable_count >= self.stable_threshold {
                 StabilityLevel::Stable
-            } else if self.stable_count >= self.settle_threshold {
-                StabilityLevel::Settling
             } else {
-                StabilityLevel::Unstable 
+                StabilityLevel::Settling
             }
         }
     }
@@ -300,6 +313,7 @@ impl<'a> StabilityDetector for StabilityStack<'a> {
     }
 
     fn is_saturated(&self) -> bool {
-        self.detectors.iter().all(|d| d.is_saturated()) && self.stable_count >= self.stable_threshold
+        self.detectors.iter().all(|d| d.is_saturated())
+            && self.stable_count >= self.stable_threshold
     }
 }

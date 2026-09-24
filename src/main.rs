@@ -8,9 +8,7 @@ mod stability;
 mod types;
 
 use display::{CORE1_EXECUTOR, CORE1_STACK, DISPLAY_WATCH, display_task};
-use filtering::{
-    EMA, Filter, FilterStack, HampelFilter, KalmanFilter, Median, NotchFilter, SMA, SavitzkyGolay7,
-};
+use filtering::{EMA, Filter, FilterStack, HampelFilter, NotchFilter, SMA, SavitzkyGolay7};
 use sampler::{CHANNEL, sampler_task};
 use stability::{StabilityDetector, StabilityLevel, StabilitySource};
 use types::{DisplayData, ScaleMode, ScaleState};
@@ -90,60 +88,54 @@ async fn main(spawner: Spawner) {
     );
 
     // ------------------------
+    // Continuous Primary 50Hz Notch Filter
+    // Strips 50Hz mains power hum upfront from all samples
+    // ------------------------
+    let mut primary_notch = NotchFilter::new_50hz_320sps();
+
+    // ------------------------
     // Filter Architecture
     // ------------------------
 
-    // FAST MODE STACK (Super damped for molasses-like movement)
-    let mut fast_notch = NotchFilter::new_50hz_320sps();
-    let mut fast_ema = EMA::<64>::new();
-    let mut fast_filters: [&mut dyn Filter; 2] = [&mut fast_notch, &mut fast_ema];
+    // FAST MODE STACK: Responsive tracking with minimal latency for live pouring
+    let mut fast_ema = EMA::<12>::new();
+    let mut fast_filters: [&mut dyn Filter; 1] = [&mut fast_ema];
     let mut fast_stack = FilterStack::new(&mut fast_filters);
 
-    // SETTLING MODE STACK (Slow, deliberate approach)
-    let mut settle_notch = NotchFilter::new_50hz_320sps();
-    let mut settle_sma = SMA::<160>::new();
+    // SETTLING MODE STACK: Moderate smoothing to damp liquid sloshing
+    let mut settle_sma = SMA::<32>::new();
     let mut settle_sg = SavitzkyGolay7::new();
-    let mut settle_filters: [&mut dyn Filter; 3] =
-        [&mut settle_notch, &mut settle_sma, &mut settle_sg];
+    let mut settle_filters: [&mut dyn Filter; 2] = [&mut settle_sma, &mut settle_sg];
     let mut settle_stack = FilterStack::new(&mut settle_filters);
 
-    // STABLE MODE STACK (Ultra-Precise Lab Grade - extremely slow)
+    // STABLE MODE STACK: Precision smoothing with outlier rejection
     let mut stable_hampel = HampelFilter::<7>::new(3.0);
-    let mut stable_notch = NotchFilter::new_50hz_320sps();
-    let mut stable_sma = SMA::<640>::new();
-    let mut stable_sg = SavitzkyGolay7::new();
-    let mut stable_kalman = KalmanFilter::new(0.000001, 100.0);
-    let mut stable_filters: [&mut dyn Filter; 5] = [
-        &mut stable_hampel,
-        &mut stable_notch,
-        &mut stable_sma,
-        &mut stable_sg,
-        &mut stable_kalman,
-    ];
+    let mut stable_sma = SMA::<96>::new();
+    let mut stable_filters: [&mut dyn Filter; 2] = [&mut stable_hampel, &mut stable_sma];
     let mut stable_stack = FilterStack::new(&mut stable_filters);
 
-    // Stability Stack: (Super damped thresholds and long debouncing)
-    // 1. MedianDecorator kills impulse noise (tapping).
-    // 2. DeadbandDecorator kills continuous vibration/ripple.
-    let mut variance_raw = stability::VarianceDetector::<128>::new(30_000_000);
-    let mut jump_raw = stability::DifferenceDetector::new(40000); // 40k counts threshold for jumps
-
-    let mut variance_med = stability::MedianDecorator::<5>::new(&mut variance_raw);
+    // ------------------------
+    // Stability Stack:
+    // 1. DifferenceDetector: detects sudden jumps (> 300 counts ~ 0.08g)
+    // 2. MedianDecorator<5>: protects difference detector against single-sample EMI spikes
+    // 3. VarianceDetector<64>: detects noise/drift over ~200ms window (threshold = 3500 counts^2 ~ 0.015g sigma)
+    // ------------------------
+    let mut variance_raw = stability::VarianceDetector::<64>::new(3_500);
+    let mut jump_raw = stability::DifferenceDetector::new(300);
     let mut jump_med = stability::MedianDecorator::<5>::new(&mut jump_raw);
 
-    let mut variance_source = stability::DeadbandDecorator::new(&mut variance_med, 15000);
-    let mut jump_source = stability::DeadbandDecorator::new(&mut jump_med, 15000);
+    let mut detectors: [&mut dyn StabilitySource; 2] = [&mut variance_raw, &mut jump_med];
 
-    let mut detectors: [&mut dyn StabilitySource; 2] = [&mut variance_source, &mut jump_source];
+    // Motion selects Fast. The first quiet sample selects Settling.
+    // Stable after 96 quiet samples (~300ms at 320 SPS).
+    let mut stability = stability::StabilityStack::new(&mut detectors, 96);
 
-    // Settling = 64 samples (~200ms), Stable = 160 samples (~500ms)
-    let mut stability = stability::StabilityStack::new(&mut detectors, 64, 160);
-
-    let mut mode = ScaleMode::Fast;
+    let mut mode = ScaleMode::Stable;
     let mut last_report_time = Instant::now();
 
     let mut tare_value: SMA<160> = SMA::new();
     let mut tare_offset = 0;
+    let mut last_output = 0;
     let mut state = ScaleState::Tare;
 
     let scale_factor = 0.0002627;
@@ -161,50 +153,57 @@ async fn main(spawner: Spawner) {
                 }
             };
 
+        // Always run the primary notch filter so it stays in steady state
+        let clean = primary_notch.add(reading);
+
         match state {
             ScaleState::Tare => {
-                let output = tare_value.add(reading);
+                let output = tare_value.add(clean);
                 if tare_value.is_saturated() {
                     tare_offset = output;
+                    last_output = output;
+                    fast_stack.init_to(output);
+                    settle_stack.init_to(output);
+                    stable_stack.init_to(output);
+                    stability.init_to(output);
+
                     state = ScaleState::Reading;
+                    mode = ScaleMode::Stable;
                     log::info!("Tare completed: offset = {}", tare_offset);
                     tare_completed = true;
                     DISPLAY_WATCH.sender().send(DisplayData {
                         value: 0.0,
                         tare_flag: true,
+                        mode: ScaleMode::Stable,
                     });
                 }
             }
             ScaleState::Reading => {
-                let level = stability.check(reading);
+                let level = stability.check(clean);
 
                 let next_mode = match level {
-                    StabilityLevel::Unstable => ScaleMode::Settling,
+                    StabilityLevel::Unstable => ScaleMode::Fast,
                     StabilityLevel::Settling => ScaleMode::Settling,
-                    StabilityLevel::Stable => ScaleMode::Settling,
+                    StabilityLevel::Stable => ScaleMode::Stable,
                 };
 
-                // HANDLE MODE TRANSITIONS (Seeding)
+                // HANDLE MODE TRANSITIONS (Bumpless seeding with last filtered output)
                 if mode != next_mode {
                     match next_mode {
-                        ScaleMode::Fast => {
-                            fast_stack.init_to(reading);
-                            if mode == ScaleMode::Stable {
-                                stability.reset();
-                            }
-                        }
-                        ScaleMode::Settling => settle_stack.init_to(reading),
-                        ScaleMode::Stable => stable_stack.init_to(reading),
+                        ScaleMode::Fast => fast_stack.init_to(last_output),
+                        ScaleMode::Settling => settle_stack.init_to(last_output),
+                        ScaleMode::Stable => stable_stack.init_to(last_output),
                     }
                 }
                 mode = next_mode;
 
-                // ADD TO FILTER
+                // ADD TO ACTIVE FILTER
                 let output = match mode {
-                    ScaleMode::Fast => fast_stack.add(reading),
-                    ScaleMode::Settling => settle_stack.add(reading),
-                    ScaleMode::Stable => stable_stack.add(reading),
+                    ScaleMode::Fast => fast_stack.add(clean),
+                    ScaleMode::Settling => settle_stack.add(clean),
+                    ScaleMode::Stable => stable_stack.add(clean),
                 };
+                last_output = output;
 
                 let output_calibrated: f32 =
                     libm::roundf((output - tare_offset) as f32 * scale_factor * 1000.0) / 1000.0;
@@ -212,12 +211,13 @@ async fn main(spawner: Spawner) {
                 DISPLAY_WATCH.sender().send(DisplayData {
                     value: output_calibrated,
                     tare_flag: tare_completed,
+                    mode,
                 });
 
                 let now = Instant::now();
                 if now - last_report_time >= Duration::from_millis(500) {
                     log::info!(
-                        "Mode: {:?}, Stability: {:?}, Value: {:.3}",
+                        "Mode: {:?}, Stability: {:?}, Value: {:.3} g",
                         mode,
                         level,
                         output_calibrated,
