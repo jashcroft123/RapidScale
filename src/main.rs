@@ -110,9 +110,9 @@ async fn main(spawner: Spawner) {
 
     // STABLE MODE STACK: Precision smoothing with outlier rejection
     let mut stable_hampel = HampelFilter::<7>::new(3.0);
-    // One-second averaging in Stable mode dampens stationary ADC noise while
+    // Two-second averaging in Stable mode dampens stationary ADC noise while
     // Fast and Settling retain their shorter response times.
-    let mut stable_sma = SMA::<320>::new();
+    let mut stable_sma = SMA::<640>::new();
     let mut stable_filters: [&mut dyn Filter; 2] = [&mut stable_hampel, &mut stable_sma];
     let mut stable_stack = FilterStack::new(&mut stable_filters);
 
@@ -129,8 +129,8 @@ async fn main(spawner: Spawner) {
     let mut detectors: [&mut dyn StabilitySource; 2] = [&mut variance_raw, &mut jump_med];
 
     // Motion selects Fast. The first quiet sample selects Settling.
-    // Stable after 96 quiet samples (~300ms at 320 SPS).
-    let mut stability = stability::StabilityStack::new(&mut detectors, 96);
+    // Require the same two-second quiet interval as the Stable-mode average.
+    let mut stability = stability::StabilityStack::new(&mut detectors, 640);
 
     let mut mode = ScaleMode::Stable;
     let mut last_report_time = Instant::now();
