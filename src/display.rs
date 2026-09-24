@@ -173,7 +173,7 @@ pub async fn display_task(
         text_buf.data.fill(Rgb565::BLACK);
 
         let mut buf: heapless::String<64> = heapless::String::new();
-        let _ = write!(&mut buf, "{:8.3} g", data.value);
+        let _ = write!(&mut buf, "{:8.2} g", data.value);
         let _ = Text::new(&buf, Point::new(0, 25), value_style).draw(&mut text_buf);
         let _ = display.fill_contiguous(
             &Rectangle::new(Point::new(10, 50), Size::new(280, 40)),
