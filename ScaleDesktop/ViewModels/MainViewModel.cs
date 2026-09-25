@@ -18,12 +18,20 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private uint? _propertyRequestId;
     private readonly Dictionary<uint, DevicePropertyRow> _pendingPropertyWrites = [];
     private readonly Queue<DevicePropertyRow> _propertyWriteQueue = new();
+    private readonly PropertyProfileStore _profileStore = new();
+    private readonly Queue<DateTime> _readingTimestamps = new();
+    private readonly DispatcherTimer _diagnosticsTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private bool _applyingProperties;
+    private string? _profileBeingApplied;
+    private uint? _lastReadingSequence;
+    private ulong _droppedReadings;
+    private DateTime? _lastReadingAt;
 
     public ObservableCollection<string> AvailablePorts { get; } = [];
     public ObservableCollection<string> Activity { get; } = [];
     public ObservableCollection<double> WeightHistory { get; } = [];
     public ObservableCollection<DevicePropertyRow> DeviceProperties { get; } = [];
+    public ObservableCollection<string> PropertyProfiles { get; } = [];
 
     [ObservableProperty] private string? selectedPort;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanStartMeasurement)), NotifyPropertyChangedFor(nameof(ConnectionButtonText))] private bool isConnected;
@@ -42,6 +50,15 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string graphRangeText = "Waiting for readings";
     [ObservableProperty] private string propertyStatus = "Connect to load saved device properties.";
     [ObservableProperty] private int propertyCount;
+    [ObservableProperty] private string? selectedPropertyProfile;
+    [ObservableProperty] private string propertyProfileName = string.Empty;
+    [ObservableProperty] private string propertyProfileStatus = "Profiles are stored locally on this PC.";
+    [ObservableProperty] private string connectionHealthText = "Disconnected";
+    [ObservableProperty] private string deviceProtocolText = "Not connected";
+    [ObservableProperty] private string sensorRateText = "—";
+    [ObservableProperty] private string readingRateText = "No readings";
+    [ObservableProperty] private string sequenceLossText = "No readings";
+    [ObservableProperty] private string lastReadingAgeText = "No data received";
 
     public bool CanStartMeasurement => IsConnected && IsTared && !OperationInProgress;
     public string ConnectionButtonText => IsConnected ? "Disconnect" : "Connect";
@@ -51,11 +68,21 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         DeviceProperties.FirstOrDefault(property => property.Name == "characterisation.cycles")?.Value,
         NumberStyles.Integer, CultureInfo.InvariantCulture, out var cycles) ? cycles : 5;
 
+    partial void OnSelectedPropertyProfileChanged(string? value)
+    {
+        if (value is not null)
+            PropertyProfileName = value;
+    }
+
     public MainViewModel()
     {
         _connection.MessageReceived += OnMessageReceived;
         _connection.ConnectionLost += OnConnectionLost;
+        _diagnosticsTimer.Tick += OnDiagnosticsTimerTick;
+        foreach (var profile in _profileStore.Load().OrderBy(profile => profile.Name, StringComparer.OrdinalIgnoreCase))
+            PropertyProfiles.Add(profile.Name);
         RefreshPorts();
+        _diagnosticsTimer.Start();
     }
 
     [RelayCommand]
@@ -89,8 +116,11 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private void ApplyPropertyChanges()
     {
-        if (!IsConnected || _applyingProperties)
+        if (!IsConnected || !IsTared || OperationInProgress || _applyingProperties)
+        {
+            PropertyStatus = "Connect and wait for startup tare to finish before saving device properties.";
             return;
+        }
         _propertyWriteQueue.Clear();
         foreach (var row in DeviceProperties.Where(property => property.IsDirty && property.IsWritable))
             _propertyWriteQueue.Enqueue(row);
@@ -109,7 +139,13 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         if (_propertyWriteQueue.Count == 0)
         {
             _applyingProperties = false;
-            PropertyStatus = "All changes saved to device flash.";
+            var appliedProfile = _profileBeingApplied;
+            PropertyStatus = _profileBeingApplied is null
+                ? "All changes saved to device flash."
+                : $"Profile ‘{_profileBeingApplied}’ applied and saved to device flash.";
+            if (appliedProfile is not null)
+                PropertyProfileStatus = $"Applied ‘{appliedProfile}’ to the scale and saved its values in device flash.";
+            _profileBeingApplied = null;
             return;
         }
         var row = _propertyWriteQueue.Dequeue();
@@ -126,6 +162,105 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     }
 
     [RelayCommand]
+    private void SavePropertyProfile()
+    {
+        var name = PropertyProfileName.Trim();
+        if (name.Length is < 1 or > 40)
+        {
+            PropertyProfileStatus = "Enter a profile name between 1 and 40 characters.";
+            return;
+        }
+        var values = DeviceProperties.Where(property => property.IsWritable)
+            .ToDictionary(property => property.Name, property => property.Value, StringComparer.Ordinal);
+        if (values.Count == 0)
+        {
+            PropertyProfileStatus = "Read the device properties before saving a profile.";
+            return;
+        }
+
+        var profiles = _profileStore.Load();
+        var existing = profiles.FindIndex(profile => string.Equals(profile.Name, name, StringComparison.OrdinalIgnoreCase));
+        var profile = new PropertyProfile(name, values);
+        if (existing >= 0)
+            profiles[existing] = profile;
+        else
+            profiles.Add(profile);
+        try
+        {
+            _profileStore.Save(profiles);
+            if (existing < 0)
+                PropertyProfiles.Add(name);
+            SelectedPropertyProfile = name;
+            PropertyProfileStatus = $"Saved {values.Count} writable values in the ‘{name}’ profile on this PC.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            PropertyProfileStatus = $"Could not save profile: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private void ApplyPropertyProfile()
+    {
+        if (!IsConnected || !IsTared || OperationInProgress || _applyingProperties)
+        {
+            PropertyProfileStatus = "Connect, wait for startup tare to finish, and make sure no scale operation is running before applying a profile.";
+            return;
+        }
+        var profile = _profileStore.Load().FirstOrDefault(item =>
+            string.Equals(item.Name, SelectedPropertyProfile, StringComparison.OrdinalIgnoreCase));
+        if (profile is null)
+        {
+            PropertyProfileStatus = "Select a saved profile first.";
+            return;
+        }
+
+        var matched = 0;
+        foreach (var value in profile.Values)
+        {
+            var property = DeviceProperties.FirstOrDefault(item => item.Name == value.Key && item.IsWritable);
+            if (property is null)
+                continue;
+            property.Value = value.Value;
+            matched++;
+        }
+        if (matched == 0)
+        {
+            PropertyProfileStatus = "This profile has no writable properties in the current device property list. Read the device and try again.";
+            return;
+        }
+        _profileBeingApplied = profile.Name;
+        PropertyProfileStatus = $"Applying {matched} values from ‘{profile.Name}’…";
+        ApplyPropertyChanges();
+        if (!_applyingProperties)
+        {
+            _profileBeingApplied = null;
+            PropertyProfileStatus = PropertyStatus;
+        }
+    }
+
+    [RelayCommand]
+    private void DeletePropertyProfile()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedPropertyProfile))
+            return;
+        var name = SelectedPropertyProfile;
+        var profiles = _profileStore.Load();
+        profiles.RemoveAll(profile => string.Equals(profile.Name, name, StringComparison.OrdinalIgnoreCase));
+        try
+        {
+            _profileStore.Save(profiles);
+            PropertyProfiles.Remove(name);
+            SelectedPropertyProfile = PropertyProfiles.FirstOrDefault();
+            PropertyProfileStatus = $"Deleted the ‘{name}’ profile from this PC.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            PropertyProfileStatus = $"Could not delete profile: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
     private void Connect()
     {
         if (IsConnected)
@@ -135,6 +270,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         }
 
         IsTared = false;
+        ResetReadingDiagnostics();
         if (string.IsNullOrWhiteSpace(SelectedPort))
         {
             ConnectionStatus = "Select a COM port";
@@ -237,6 +373,8 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         switch (message)
         {
             case HelloMessage hello:
+                DeviceProtocolText = $"{hello.Device} · USB protocol v{hello.Version}";
+                SensorRateText = $"{hello.SampleRate} samples/s";
                 if (hello.Version == 2)
                 {
                     ConnectionStatus = $"Connected · {hello.Device} · protocol v{hello.Version}";
@@ -251,6 +389,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
                 break;
 
             case ReadingMessage reading:
+                RecordReading(reading);
                 WeightText = reading.WeightGrams.ToString("0.00", CultureInfo.CurrentCulture);
                 WeightHistory.Add((double)reading.WeightGrams);
                 while (WeightHistory.Count > 1200)
@@ -302,7 +441,9 @@ public partial class MainViewModel : ViewModelBase, IDisposable
                 _pendingPropertyWrites.Remove(propertyError.Id);
                 _propertyWriteQueue.Clear();
                 _applyingProperties = false;
+                _profileBeingApplied = null;
                 PropertyStatus = $"Could not save {propertyError.Name}: {propertyError.Code.Replace('_', ' ')}.";
+                PropertyProfileStatus = "Profile application stopped at the first rejected value; saved values remain on the device and unsaved values remain editable.";
                 break;
 
             case AcknowledgementMessage ack:
@@ -381,6 +522,13 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             _activeOperationId = null;
             ConnectionStatus = "Connection lost";
             OperationStatus = message;
+            ConnectionHealthText = "Connection lost";
+            _propertyRequestId = null;
+            _pendingPropertyWrites.Clear();
+            _propertyWriteQueue.Clear();
+            _applyingProperties = false;
+            _profileBeingApplied = null;
+            ResetReadingDiagnostics();
         });
 
     private void Disconnect()
@@ -396,10 +544,83 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         _pendingPropertyWrites.Clear();
         _propertyWriteQueue.Clear();
         _applyingProperties = false;
+        _profileBeingApplied = null;
+        ResetReadingDiagnostics();
         DeviceProperties.Clear();
         PropertyCount = 0;
         PropertyStatus = "Connect to load saved device properties.";
         AddActivity("Disconnected");
+    }
+
+    private void RecordReading(ReadingMessage reading)
+    {
+        var now = DateTime.UtcNow;
+        if (_lastReadingSequence is uint previous)
+        {
+            var sequenceDelta = unchecked(reading.Sequence - previous);
+            if (sequenceDelta is > 1 and < 1_000_000)
+                _droppedReadings += sequenceDelta - 1;
+        }
+        _lastReadingSequence = reading.Sequence;
+        _lastReadingAt = now;
+        _readingTimestamps.Enqueue(now);
+        while (_readingTimestamps.Count > 0 && now - _readingTimestamps.Peek() > TimeSpan.FromSeconds(5))
+            _readingTimestamps.Dequeue();
+        UpdateReadingDiagnostics(now);
+    }
+
+    private void OnDiagnosticsTimerTick(object? sender, EventArgs e)
+    {
+        var now = DateTime.UtcNow;
+        while (_readingTimestamps.Count > 0 && now - _readingTimestamps.Peek() > TimeSpan.FromSeconds(5))
+            _readingTimestamps.Dequeue();
+        UpdateReadingDiagnostics(now);
+    }
+
+    private void UpdateReadingDiagnostics(DateTime now)
+    {
+        if (!IsConnected)
+        {
+            ConnectionHealthText = "Disconnected";
+            ReadingRateText = "No readings";
+        }
+        else if (_lastReadingAt is null)
+        {
+            ConnectionHealthText = "Connected · waiting for readings";
+            ReadingRateText = "Waiting for readings";
+        }
+        else
+        {
+            var age = now - _lastReadingAt.Value;
+            ConnectionHealthText = age <= TimeSpan.FromSeconds(1.5) ? "Receiving data" : "No recent readings";
+            if (_readingTimestamps.Count >= 2)
+            {
+                var span = _readingTimestamps.Last() - _readingTimestamps.Peek();
+                ReadingRateText = span > TimeSpan.Zero
+                    ? $"{(_readingTimestamps.Count - 1) / span.TotalSeconds:0.0} readings/s"
+                    : "Measuring rate…";
+            }
+            else
+            {
+                ReadingRateText = "Measuring rate…";
+            }
+            LastReadingAgeText = $"{age.TotalMilliseconds:0} ms ago";
+        }
+
+        SequenceLossText = _lastReadingSequence is null
+            ? "No readings"
+            : $"{_droppedReadings:N0} missing sequence(s) since connect";
+        if (_lastReadingAt is null)
+            LastReadingAgeText = "No data received";
+    }
+
+    private void ResetReadingDiagnostics()
+    {
+        _lastReadingSequence = null;
+        _lastReadingAt = null;
+        _droppedReadings = 0;
+        _readingTimestamps.Clear();
+        UpdateReadingDiagnostics(DateTime.UtcNow);
     }
 
     private void AddActivity(string text)
@@ -413,6 +634,8 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         _connection.MessageReceived -= OnMessageReceived;
         _connection.ConnectionLost -= OnConnectionLost;
+        _diagnosticsTimer.Stop();
+        _diagnosticsTimer.Tick -= OnDiagnosticsTimerTick;
         _connection.Dispose();
     }
 }

@@ -79,6 +79,43 @@
                     </StackPanel>
                 </Border>
 
+                <Border Background="#121A24" BorderBrush="#202C39" BorderThickness="1" CornerRadius="16" Padding="20">
+                    <StackPanel Spacing="11">
+                        <StackPanel Spacing="3">
+                            <TextBlock Text="DEVICE DIAGNOSTICS" FontSize="11" Foreground="#94A2B2" FontWeight="Bold" LetterSpacing="1.2" />
+                            <TextBlock Text="Live connection and reading stream health" FontSize="11" Foreground="#6F7C8A" />
+                        </StackPanel>
+                        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="20" RowSpacing="9">
+                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                <TextBlock Text="Connection" Foreground="#748394" FontSize="11" />
+                                <TextBlock Text="{Binding ConnectionHealthText}" Foreground="#AAB6C4" FontSize="11" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7">
+                                <TextBlock Text="Device / protocol" Foreground="#748394" FontSize="11" />
+                                <TextBlock Text="{Binding DeviceProtocolText}" Foreground="#AAB6C4" FontSize="11" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="7">
+                                <TextBlock Text="Sensor rate" Foreground="#748394" FontSize="11" />
+                                <TextBlock Text="{Binding SensorRateText}" Foreground="#AAB6C4" FontSize="11" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="7">
+                                <TextBlock Text="USB reading rate" Foreground="#748394" FontSize="11" />
+                                <TextBlock Text="{Binding ReadingRateText}" Foreground="#AAB6C4" FontSize="11" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="7">
+                                <TextBlock Text="Sequence gaps" Foreground="#748394" FontSize="11" />
+                                <TextBlock Text="{Binding SequenceLossText}" Foreground="#AAB6C4" FontSize="11" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="7">
+                                <TextBlock Text="Last reading / tare" Foreground="#748394" FontSize="11" />
+                                <TextBlock Text="{Binding LastReadingAgeText}" Foreground="#AAB6C4" FontSize="11" />
+                                <TextBlock Text="/" Foreground="#748394" FontSize="11" />
+                                <TextBlock Text="{Binding TareText}" Foreground="#AAB6C4" FontSize="11" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
                 <Grid ColumnDefinitions="*,*,*" ColumnSpacing="14">
                     <Border Background="#121A24" BorderBrush="#202C39" BorderThickness="1" CornerRadius="16" Padding="20">
                         <StackPanel Spacing="12">
@@ -122,7 +159,7 @@
                                 <TextBlock Text="Calibration, tare, and characterisation settings are stored on the scale. Measured results are read-only." FontSize="11" Foreground="#6F7C8A" TextWrapping="Wrap" />
                             </StackPanel>
                             <Button Grid.Column="1" Command="{Binding GetPropertiesCommand}" IsEnabled="{Binding IsConnected}" Content="Read device" Padding="13,8" VerticalAlignment="Center" />
-                            <Button Grid.Column="2" Command="{Binding ApplyPropertyChangesCommand}" IsEnabled="{Binding IsConnected}" Content="Save changes to device" Padding="13,8" VerticalAlignment="Center" />
+                            <Button Grid.Column="2" Command="{Binding ApplyPropertyChangesCommand}" IsEnabled="{Binding CanStartMeasurement}" Content="Save changes to device" Padding="13,8" VerticalAlignment="Center" />
                         </Grid>
                         <TextBlock Text="{Binding PropertyStatus}" FontSize="11" Foreground="#65E0B2" TextWrapping="Wrap" />
                         <Grid ColumnDefinitions="2.2*,1.3*,0.8*,0.7*" Margin="2,4,2,0">
@@ -143,6 +180,25 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="#121A24" BorderBrush="#202C39" BorderThickness="1" CornerRadius="16" Padding="20">
+                    <StackPanel Spacing="11">
+                        <StackPanel Spacing="3">
+                            <TextBlock Text="PROPERTY PROFILES" FontSize="11" Foreground="#94A2B2" FontWeight="Bold" LetterSpacing="1.2" />
+                            <TextBlock Text="Save writable calibration, tare, and characterisation settings locally, then apply them to this scale." FontSize="11" Foreground="#6F7C8A" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <TextBox Text="{Binding PropertyProfileName}" PlaceholderText="New or existing profile name" />
+                            <Button Grid.Column="1" Command="{Binding SavePropertyProfileCommand}" Content="Save current values as profile" Padding="13,8" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                            <ComboBox ItemsSource="{Binding PropertyProfiles}" SelectedItem="{Binding SelectedPropertyProfile}" PlaceholderText="Choose a profile" />
+                            <Button Grid.Column="1" Command="{Binding ApplyPropertyProfileCommand}" IsEnabled="{Binding CanStartMeasurement}" Content="Apply to scale" Padding="13,8" />
+                            <Button Grid.Column="2" Command="{Binding DeletePropertyProfileCommand}" Content="Delete" Padding="13,8" />
+                        </Grid>
+                        <TextBlock Text="{Binding PropertyProfileStatus}" FontSize="11" Foreground="#65E0B2" TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
 
