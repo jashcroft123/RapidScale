@@ -4,7 +4,8 @@ MEMORY {
      *
      * 2 MiB is a safe default here, although a Pico 2 has 4 MiB.
      */
-    FLASH : ORIGIN = 0x10000000, LENGTH = 2048K
+    /* Reserve the final two 4 KiB sectors for atomic persistent settings. */
+    FLASH : ORIGIN = 0x10000000, LENGTH = 2040K
     /*
      * RAM consists of 8 banks, SRAM0-SRAM7, with a striped mapping.
      * This is usually good for performance, as it distributes load on

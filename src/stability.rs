@@ -322,8 +322,14 @@ impl<'a> StabilityStack<'a> {
     /// Calibrate noise rejection from the empty-pan tare window.
     pub fn calibrate_noise_thresholds(&mut self) -> Option<(i64, i64, i32)> {
         let measured = self.detectors.iter().find_map(|detector| detector.variance())?;
+        let (threshold, jump_threshold) = self.set_noise_thresholds(measured);
+        Some((measured, threshold, jump_threshold))
+    }
+
+    pub fn set_noise_thresholds(&mut self, measured: i64) -> (i64, i32) {
         const MIN_THRESHOLD: i64 = 3_500;
         const MAX_THRESHOLD: i64 = 1_000_000;
+        let measured = measured.max(0);
         let threshold = measured.saturating_mul(4).clamp(MIN_THRESHOLD, MAX_THRESHOLD);
         let jump_threshold = (libm::sqrtf(measured as f32) * 4.0) as i32;
         let jump_threshold = jump_threshold.clamp(300, 5_000);
@@ -331,7 +337,7 @@ impl<'a> StabilityStack<'a> {
             detector.set_variance_threshold(threshold);
             detector.set_difference_threshold(jump_threshold);
         }
-        Some((measured, threshold, jump_threshold))
+        (threshold, jump_threshold)
     }
 
     pub fn measured_variance(&self) -> Option<i64> {

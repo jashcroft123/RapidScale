@@ -1,0 +1,175 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:ScaleDesktop.ViewModels"
+        xmlns:controls="using:ScaleDesktop.Controls"
+        xmlns:models="using:ScaleDesktop.Models"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1040" d:DesignHeight="780"
+        x:Class="ScaleDesktop.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="RapidScale"
+        Width="1040" Height="780" MinWidth="860" MinHeight="700"
+        Background="#0B1016">
+
+    <Design.DataContext>
+        <vm:MainViewModel />
+    </Design.DataContext>
+
+    <Grid RowDefinitions="Auto,*" Margin="28">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,24">
+            <StackPanel Orientation="Horizontal" Spacing="13" VerticalAlignment="Center">
+                <Border Width="42" Height="42" CornerRadius="12" Background="#173A35">
+                    <TextBlock Text="R" FontSize="23" FontWeight="Bold" Foreground="#65E0B2"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <StackPanel Spacing="1" VerticalAlignment="Center">
+                    <TextBlock Text="RAPIDSCALE" FontSize="17" FontWeight="Bold" LetterSpacing="1.5" />
+                    <TextBlock Text="PRECISION INSTRUMENT" FontSize="10" Foreground="#8290A0" LetterSpacing="1.4" />
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <ComboBox Width="128" ItemsSource="{Binding AvailablePorts}" SelectedItem="{Binding SelectedPort}"
+                          PlaceholderText="COM port" />
+                <Button Command="{Binding RefreshPortsCommand}" Content="↻" Width="40" ToolTip.Tip="Refresh ports" />
+                <Button Command="{Binding ConnectCommand}" Content="{Binding ConnectionButtonText}" Width="116" Padding="12,9" />
+            </StackPanel>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="18">
+                <Border Background="#121A24" BorderBrush="#202C39" BorderThickness="1" CornerRadius="20" Padding="26">
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
+                        <StackPanel Orientation="Horizontal" Spacing="9">
+                            <Ellipse Width="9" Height="9" Fill="{Binding StabilityBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="LIVE WEIGHT" FontSize="12" FontWeight="SemiBold" Foreground="#94A2B2" LetterSpacing="1.3" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" HorizontalAlignment="Right" Spacing="3">
+                            <TextBlock Text="{Binding ConnectionStatus}" FontSize="12" Foreground="#AAB6C4" HorizontalAlignment="Right" />
+                            <TextBlock Text="{Binding TareText}" FontSize="11" Foreground="#748394" HorizontalAlignment="Right" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12" Margin="0,12,0,4" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding WeightText}" FontSize="72" FontWeight="SemiBold" />
+                            <TextBlock Text="g" FontSize="25" Foreground="#AAB6C4" VerticalAlignment="Bottom" Margin="0,0,0,12" />
+                        </StackPanel>
+                        <Border Grid.Row="1" Grid.Column="1" Background="#1B2733" CornerRadius="12" Padding="14,10" VerticalAlignment="Center">
+                            <StackPanel Spacing="3" HorizontalAlignment="Center">
+                                <TextBlock Text="{Binding StabilityText}" Foreground="{Binding StabilityBrush}" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center" />
+                                <TextBlock Text="{Binding ModeText}" Foreground="#8391A0" FontSize="10" HorizontalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="{Binding OperationStatus}" Foreground="#95A3B2" FontSize="13" Margin="0,12,0,0" TextWrapping="Wrap" />
+                    </Grid>
+                </Border>
+
+                <Border Background="#121A24" BorderBrush="#202C39" BorderThickness="1" CornerRadius="16" Padding="20">
+                    <StackPanel Spacing="10">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="WEIGHT TREND" FontSize="11" Foreground="#94A2B2" FontWeight="Bold" LetterSpacing="1.2" />
+                                <TextBlock Text="Last 60 seconds · live updates every 50 ms" FontSize="11" Foreground="#6F7C8A" />
+                            </StackPanel>
+                            <TextBlock Grid.Column="1" Text="{Binding GraphRangeText}" FontSize="11" Foreground="#AAB6C4" VerticalAlignment="Center" />
+                        </Grid>
+                        <controls:WeightGraph Values="{Binding WeightHistory}" Height="158" />
+                    </StackPanel>
+                </Border>
+
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="14">
+                    <Border Background="#121A24" BorderBrush="#202C39" BorderThickness="1" CornerRadius="16" Padding="20">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="ZERO" FontSize="11" Foreground="#65E0B2" FontWeight="Bold" LetterSpacing="1.2" />
+                            <TextBlock Text="Tare the empty platform" FontSize="17" FontWeight="SemiBold" />
+                            <TextBlock Text="Remove all load, then capture the zero point." FontSize="12" Foreground="#93A0AE" TextWrapping="Wrap" />
+                            <Button Command="{Binding TareCommand}" IsEnabled="{Binding IsConnected}" Content="Tare scale" HorizontalAlignment="Left" Padding="16,9" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="1" Background="#121A24" BorderBrush="#202C39" BorderThickness="1" CornerRadius="16" Padding="20">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="CALIBRATION" FontSize="11" Foreground="#8EAEFF" FontWeight="Bold" LetterSpacing="1.2" />
+                            <TextBlock Text="Set the scale factor" FontSize="17" FontWeight="SemiBold" />
+                            <TextBlock Text="Put the reference mass on first; enter its mass in grams." FontSize="12" Foreground="#93A0AE" TextWrapping="Wrap" />
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <TextBox Text="{Binding KnownMass}" PlaceholderText="Known mass (g)" />
+                                <Button Grid.Column="1" Command="{Binding CalibrateCommand}" IsEnabled="{Binding CanStartMeasurement}" Content="Calibrate" Padding="13,8" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="2" Background="#121A24" BorderBrush="#202C39" BorderThickness="1" CornerRadius="16" Padding="20">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="CHARACTERISATION" FontSize="11" Foreground="#F2C66D" FontWeight="Bold" LetterSpacing="1.1" />
+                            <TextBlock Text="Characterise filter response" FontSize="17" FontWeight="SemiBold" />
+                            <TextBlock Text="Use the same known reference load throughout. The app prompts you to add and remove it for the configured number of cycles (five by default). It measures empty-platform background noise, loaded-reading noise, and how long the filtered value takes to settle within the configured tolerance between sampling windows. This characterises stability, not accuracy." FontSize="12" Foreground="#93A0AE" TextWrapping="Wrap" />
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <TextBox Text="{Binding KnownMass}" PlaceholderText="Reference load (g)" />
+                                <Button Grid.Column="1" Command="{Binding CharacteriseCommand}" IsEnabled="{Binding CanStartMeasurement}" Content="Start cycles" Padding="13,8" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <Border Background="#121A24" BorderBrush="#202C39" BorderThickness="1" CornerRadius="16" Padding="20">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="DEVICE PROPERTIES" FontSize="11" Foreground="#94A2B2" FontWeight="Bold" LetterSpacing="1.2" />
+                                <TextBlock Text="Calibration, tare, and characterisation settings are stored on the scale. Measured results are read-only." FontSize="11" Foreground="#6F7C8A" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Command="{Binding GetPropertiesCommand}" IsEnabled="{Binding IsConnected}" Content="Read device" Padding="13,8" VerticalAlignment="Center" />
+                            <Button Grid.Column="2" Command="{Binding ApplyPropertyChangesCommand}" IsEnabled="{Binding IsConnected}" Content="Save changes to device" Padding="13,8" VerticalAlignment="Center" />
+                        </Grid>
+                        <TextBlock Text="{Binding PropertyStatus}" FontSize="11" Foreground="#65E0B2" TextWrapping="Wrap" />
+                        <Grid ColumnDefinitions="2.2*,1.3*,0.8*,0.7*" Margin="2,4,2,0">
+                            <TextBlock Text="PROPERTY" FontSize="10" Foreground="#6F7C8A" FontWeight="Bold" />
+                            <TextBlock Grid.Column="1" Text="VALUE" FontSize="10" Foreground="#6F7C8A" FontWeight="Bold" />
+                            <TextBlock Grid.Column="2" Text="UNIT" FontSize="10" Foreground="#6F7C8A" FontWeight="Bold" />
+                            <TextBlock Grid.Column="3" Text="ACCESS" FontSize="10" Foreground="#6F7C8A" FontWeight="Bold" />
+                        </Grid>
+                        <ItemsControl ItemsSource="{Binding DeviceProperties}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:DevicePropertyRow">
+                                    <Grid ColumnDefinitions="2.2*,1.3*,0.8*,0.7*" Margin="0,2" ColumnSpacing="10">
+                                        <TextBlock Grid.Column="0" Text="{Binding Name}" FontFamily="Consolas" FontSize="11" Foreground="#BCC7D2" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                        <TextBox Grid.Column="1" Text="{Binding Value, Mode=TwoWay}" IsReadOnly="{Binding IsReadOnly}" FontSize="12" Padding="8,4" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Unit}" FontSize="11" Foreground="#93A0AE" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="3" Text="{Binding AccessText}" FontSize="10" Foreground="#93A0AE" VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Grid ColumnDefinitions="1.15*,*" ColumnSpacing="14">
+                    <Border Background="#121A24" BorderBrush="#202C39" BorderThickness="1" CornerRadius="16" Padding="20">
+                        <StackPanel Spacing="9">
+                            <TextBlock Text="SESSION RESULTS" FontSize="11" Foreground="#94A2B2" FontWeight="Bold" LetterSpacing="1.2" />
+                            <TextBlock Text="{Binding CalibrationResult}" FontSize="13" TextWrapping="Wrap" />
+                            <Border Height="1" Background="#25313E" Margin="0,3" />
+                            <TextBlock Text="{Binding CharacterisationResult}" FontSize="13" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Background="#121A24" BorderBrush="#202C39" BorderThickness="1" CornerRadius="16" Padding="20">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="RECENT ACTIVITY" FontSize="11" Foreground="#94A2B2" FontWeight="Bold" LetterSpacing="1.2" />
+                            <ItemsControl ItemsSource="{Binding Activity}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="11" Foreground="#A6B2BF" Margin="0,3" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+                <TextBlock Text="Changes saved from the property table are retained in device flash across reboots." FontSize="11" Foreground="#6F7C8A" Margin="2,0,0,4" />
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>
