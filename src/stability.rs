@@ -154,12 +154,15 @@ impl<'a> StabilitySource for DeadbandDecorator<'a> {
 // ------------------------
 // Variance Detector (Base Source) - O(1) Running Variance with Exact Numerator
 // ------------------------
+const VARIANCE_CONFIRM_SAMPLES: usize = 8;
+
 pub struct VarianceDetector<const N: usize> {
     buf: [i32; N],
     idx: usize,
     count: usize,
     sum: i64,
     sum_sq: i64,
+    over_threshold_count: usize,
     threshold: i64,
 }
 
@@ -171,6 +174,7 @@ impl<const N: usize> VarianceDetector<N> {
             count: 0,
             sum: 0,
             sum_sq: 0,
+            over_threshold_count: 0,
             threshold,
         }
     }
@@ -202,7 +206,13 @@ impl<const N: usize> StabilitySource for VarianceDetector<N> {
         let n = N as i128;
         let numerator = n * i128::from(self.sum_sq) - i128::from(self.sum) * i128::from(self.sum);
         let limit = i128::from(self.threshold) * n * n;
-        numerator > limit
+        if numerator > limit {
+            self.over_threshold_count = self.over_threshold_count.saturating_add(1);
+            self.over_threshold_count >= VARIANCE_CONFIRM_SAMPLES
+        } else {
+            self.over_threshold_count = 0;
+            false
+        }
     }
 
     fn reset(&mut self) {
@@ -211,6 +221,7 @@ impl<const N: usize> StabilitySource for VarianceDetector<N> {
         self.idx = 0;
         self.sum = 0;
         self.sum_sq = 0;
+        self.over_threshold_count = 0;
     }
 
     fn init_to(&mut self, value: i32) {
@@ -220,6 +231,7 @@ impl<const N: usize> StabilitySource for VarianceDetector<N> {
         let v64 = value as i64;
         self.sum = v64 * N as i64;
         self.sum_sq = (v64 * v64) * N as i64;
+        self.over_threshold_count = 0;
     }
 
     fn is_saturated(&self) -> bool {
